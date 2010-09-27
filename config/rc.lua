@@ -104,6 +104,9 @@ require "history_chrome"
 -- Add command completion
 require "completion"
 
+-- Dbus support
+require "dbus"
+
 require "follow_selected"
 require "go_input"
 require "go_next_prev"
@@ -120,14 +123,22 @@ if w then
         w:new_tab(uri, i == 1)
     end
 else
-    -- Or open new window
-    window.new(uris)
+    w = window.new(uris)
 end
 
--------------------------------------------
--- Open URIs from other luakit instances --
--------------------------------------------
 
+-- register my dbus callback
+--
+-- this should be done somwhere else, but window object is required, so just for
+-- this example, register it here
+dbus.handlers.open_url = function (data)
+    w:new_tab(data.arg, true)
+end
+
+
+-----------------------------------------------------------
+-- Open URIs from other luakit instances (DBUS required) --
+-----------------------------------------------------------
 if unique then
     unique.add_signal("message", function (msg, screen)
         local cmd, arg = string.match(msg, "^(%S+)%s*(.*)")

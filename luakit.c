@@ -21,6 +21,7 @@
 #include "globalconf.h"
 #include "common/util.h"
 #include "luah.h"
+#include "common/dbus.h"
 
 #include <gtk/gtk.h>
 #include <signal.h>
@@ -38,7 +39,10 @@ sigchld(int signum) {
     while(0 < waitpid(-1, NULL, WNOHANG));
 }
 
-void
+/*
+ * Initialize and return new lua environment
+ */
+lua_State *
 init_lua(gchar **uris)
 {
     gchar *uri;
@@ -58,6 +62,8 @@ init_lua(gchar **uris)
         lua_rawseti(L, -2, i + 1);
     }
     lua_setglobal(L, "uris");
+
+    return L;
 }
 
 void
@@ -74,7 +80,7 @@ init_directories(void)
 
 /* load command line options into luakit and return uris to load */
 gchar**
-parseopts(int argc, gchar *argv[], gboolean **nonblock) {
+parseopts(int argc, gchar *argv[], gboolean **nonblock, gchar **dbus_name) {
     GOptionContext *context;
     gboolean *version_only = NULL;
     gboolean *check_only = NULL;
@@ -91,6 +97,7 @@ parseopts(int argc, gchar *argv[], gboolean **nonblock) {
       { "version", 'V', 0, G_OPTION_ARG_NONE,         &version_only,         "print version and exit",    NULL   },
       { "check",   'k', 0, G_OPTION_ARG_NONE,         &check_only,           "check config and exit",     NULL   },
       { "nonblock",'n', 0, G_OPTION_ARG_NONE,         nonblock,              "run in background",         NULL   },
+      { "dbus",    'b', 0, G_OPTION_ARG_STRING,       dbus_name,             "D-BUS name suffix",         "NAME" },
       { NULL,      0,   0, 0,                         NULL,                  NULL,                        NULL   },
     };
 
@@ -133,8 +140,10 @@ parseopts(int argc, gchar *argv[], gboolean **nonblock) {
 
 gint
 main(gint argc, gchar *argv[]) {
+    lua_State *L;
     gboolean *nonblock = NULL;
     gchar **uris = NULL;
+    gchar *dbus_name = NULL;
     pid_t pid, sid;
 
     /* clean up any zombies */
@@ -152,7 +161,7 @@ main(gint argc, gchar *argv[]) {
     setlocale(LC_NUMERIC, "C");
 
     /* parse command line opts and get uris to load */
-    uris = parseopts(argc, argv, &nonblock);
+    uris = parseopts(argc, argv, &nonblock, &dbus_name);
 
     /* if non block mode - respawn, detach and continue in child */
     if (nonblock) {
@@ -173,7 +182,12 @@ main(gint argc, gchar *argv[]) {
         g_thread_init(NULL);
 
     init_directories();
-    init_lua(uris);
+    L = init_lua(uris);
+    if (dbus_name != NULL) {
+        /* turn dbus support on */
+        luakit_dbus_init(L, dbus_name);
+    }
+
 
     /* parse and run configuration file */
     if(!luaH_parserc(globalconf.confpath, TRUE))
