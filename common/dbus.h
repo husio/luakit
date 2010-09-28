@@ -107,7 +107,7 @@ luakit_dbus_init(lua_State *L, const char *name)
 {
     char *dbus_name;
 
-    dbus_name = g_strdup_printf(dbus_name, "%s.%s", LUAKIT_DBUS_BASENAME, name);
+    dbus_name = g_strdup_printf("%s.%s", LUAKIT_DBUS_BASENAME, name);
 
     dbus_error_init(&err);
 
