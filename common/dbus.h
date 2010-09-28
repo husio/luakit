@@ -56,11 +56,10 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 
     dbus_message_get_args(msg, &err, DBUS_TYPE_STRING, &arg, DBUS_TYPE_INVALID);
     if (dbus_error_is_set(&err)) {
-        dbus_error_free(&err);
         g_error("D-BUS message error: %s\n", err.message);
+        dbus_error_free(&err);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
-
 
     /* create table with some useful dbus data */
     lua_newtable(L);
