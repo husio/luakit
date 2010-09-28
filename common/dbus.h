@@ -105,10 +105,9 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 int
 luakit_dbus_init(lua_State *L, const char *name)
 {
-    char dbus_name[1024];
+    char *dbus_name;
 
-    memset(dbus_name, '\0', 1024);
-    g_snprintf(dbus_name, 1023, "%s.%s", LUAKIT_DBUS_BASENAME, name);
+    dbus_name = g_strdup_printf(dbus_name, "%s.%s", LUAKIT_DBUS_BASENAME, name);
 
     dbus_error_init(&err);
 
@@ -132,6 +131,7 @@ luakit_dbus_init(lua_State *L, const char *name)
     /* allow it to work with glib loop */
     dbus_connection_setup_with_g_main(conn, NULL);
 
+    g_free(dbus_name);
     return 0;
 
 dbus_err:
@@ -139,6 +139,7 @@ dbus_err:
     dbus_error_free(&err);
     dbus_connection_unref(conn);
     conn = NULL;
+    g_free(dbus_name);
     return 1;
 }
 
