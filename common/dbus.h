@@ -30,7 +30,7 @@ static DBusError err;
 static DBusConnection *conn = NULL;
 
 /*
- * Main dbus singnals filter. Convert dbus message into lua table and call
+ * Main dbus signals filter. Convert dbus message into lua table and call
  * related callback function if defined.
  */
 static DBusHandlerResult
@@ -99,8 +99,8 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 }
 
 /*
- * Initialize dbus environ - build session name, connect to daemon, setup
- * singnal filter. On any error, call `g_error`.
+ * Initialize dbus environment - build session name, connect to daemon and setup
+ * signal filter. On any error, call `g_error`.
  */
 int
 luakit_dbus_init(lua_State *L, const char *name)
