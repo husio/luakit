@@ -36,6 +36,7 @@ static DBusConnection *conn = NULL;
 static DBusHandlerResult
 dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 {
+    (void) c;
     lua_State *L = (lua_State *)data;
     char *arg;
 
