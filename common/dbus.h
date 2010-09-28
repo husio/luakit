@@ -39,9 +39,7 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
     lua_State *L = (lua_State *)data;
     char *arg;
 
-    if (L == NULL) {
-        return DBUS_HANDLER_RESULT_HANDLED;
-    }
+    g_return_val_if_fail(L, DBUS_HANDLER_RESULT_HANDLED);
 
     /* prepare Lua for dbus.handler call */
     lua_getfield(L, LUA_GLOBALSINDEX, "dbus");
