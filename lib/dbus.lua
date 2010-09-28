@@ -23,7 +23,7 @@ function handlers.show(msg)
 end
 
 -- main dbus calls handler
-function main_handler(mgs)
+function main_handler(msg)
     local callback = handlers[msg.member];
     if callback then
         callback(msg);
