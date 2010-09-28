@@ -38,7 +38,7 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 {
     (void) c;
     lua_State *L = (lua_State *)data;
-    char *arg;
+    const char *arg;
 
     g_return_val_if_fail(L, DBUS_HANDLER_RESULT_HANDLED);
 
