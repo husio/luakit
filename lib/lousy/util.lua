@@ -230,6 +230,14 @@ function string.strip(s, pattern)
     return rstring.sub(s, sub_start or 1, sub_end or #s)
 end
 
+--- Python like string startswith method
+-- @param s the string to check
+-- @param sbegin test begin for given string
+-- @return true if starts with given string else false
+function string.startswith(s, sbegin)
+    return rstring.sub(s, 1, rstring.len(sbegin)) == sbegin
+end
+
 local function find_file(paths)
     for _, p in ipairs(paths) do
         if os.exists(p) then return p end

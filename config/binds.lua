@@ -276,6 +276,71 @@ binds.commands = {
 
     -- Quickmark delete all
     cmd({"delqm!", "delqmarks!"},       function (w) quickmarks.delall() end),
+
+    -- webkit property set/get
+    cmd("propset",                     function (w, a)
+                                            local view = w:get_current()
+                                            local domain = string.match(view.uri, "^%a+://([^/]*)/?")
+                                            string.gsub(a, "(%S+)%s+(%S+)", function (property_name, value)
+                                                domainprops.property_set(domain, property_name, value)
+                                                local new_value = domainprops.property_get(domain, property_name)
+                                                -- setup new view property
+                                                view:set_prop(property_name, new_value)
+                                                w:notify(string.format("Property changed: %s = %s",
+                                                        property_name, tostring(new_value)))
+                                            end)
+                                        end),
+    -- same as 'propset' but for all domains
+    -- TODO: DRY (see propset cmd)
+    cmd("propsetg",                     function (w, a)
+                                            local view = w:get_current()
+                                            local domain = "all"
+                                            string.gsub(a, "(%S+)%s+(%S+)", function (property_name, value)
+                                                domainprops.property_set(domain, property_name, value)
+                                                local new_value = domainprops.property_get(domain, property_name)
+                                                -- setup new view property
+                                                view:set_prop(property_name, new_value)
+                                                w:notify(string.format("Property changed: %s = %s",
+                                                        property_name, tostring(new_value)))
+                                            end)
+                                        end),
+    cmd("propget",                      function (w, a)
+                                            local view = w:get_current()
+                                            local domain = string.match(view.uri, "^%a+://([^/]*)/?")
+                                            local value = domainprops.property_get(domain, a)
+                                            -- mark setting as [g]lobal or [d]omain specyfic
+                                            local source = "d"
+                                            if value == nil then
+                                                value = domainprops.property_get("all", a)
+                                                -- if value is nil, there's no source
+                                                source = value ~= nil and "g" or ""
+                                            end
+                                            w:notify(string.format("%s  %s = %s",
+                                                    source, a, tostring(value)))
+                                        end),
+    cmd("propall",                      function (w, a)
+                                            local domain
+                                            if a then
+                                                domain = a
+                                            else
+                                                local view = w:get_current()
+                                                domain = string.match(view.uri, "^%a+://([^/]*)/?")
+                                            end
+                                            local conf = domainprops.domain_get(domain)
+                                            local conf_a = domainprops.domain_get("all")
+                                            local t = {}
+                                            if not next(conf) then
+                                                w:notify("No configuration found")
+                                            else
+                                                for k, v in pairs(conf) do
+                                                    -- mark setting as [g]lobal
+                                                    -- or [d]omain specyfic
+                                                    local d = conf_a[k] and "g" or "d"
+                                                    t[#t + 1] = string.format("%s  %s = %s", d, k, tostring(v))
+                                                end
+                                                w:notify(table.concat(t, "\n"))
+                                            end
+                                        end),
 }
 
 -- Helper functions which are added to the window struct

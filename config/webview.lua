@@ -123,7 +123,7 @@ webview.init_funcs = {
             if status ~= "committed" then return end
             local domain = (v.uri and string.match(v.uri, "^%a+://([^/]*)/?")) or "about:blank"
             if string.match(domain, "^www.") then domain = string.sub(domain, 5) end
-            local props = lousy.util.table.join(domain_props.all or {}, domain_props[domain] or {})
+            local props = domainprops.domain_get(domain)
             for k, v in pairs(props) do
                 info("Domain prop: %s = %s (%s)", k, tostring(v), domain)
                 view:set_prop(k, v)

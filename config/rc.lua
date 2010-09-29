@@ -45,6 +45,10 @@ require "go_up"
 require "session"
 require "quickmarks"
 
+-- Init domainprops lib
+require "domainprops"
+domainprops.load()
+
 -- Init bookmarks lib
 require "bookmarks"
 bookmarks.load()
