@@ -1,8 +1,23 @@
 /*
  * dbus.h - dbus support
  *
+ * Copyright (C) 2010 Piotr Husiatyński <phusiatynski@gmail.com>
+ * Copyright (C) 2010 Gregor Uhlenheuer
  *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #ifndef __LUAKIT_DBUS__
 #define __LUAKIT_DBUS__
 
@@ -10,24 +25,14 @@
 #include <dbus/dbus.h>
 #include <dbus/dbus-glib-lowlevel.h>
 #include "luah.h"
+#include "common/util.h"
 
-#define LUAKIT_DBUS_MAX_CALLBACKS 1024
 #define LUAKIT_DBUS_BASENAME "org.luakit.dbus"
-#define LUAKIT_DBUS_BASEPATH "/org/luakit/dbus"
 
-/*
- * TODO
- *
- * Dbus support is optional for every luakit instance
- *
- * Running dbus requires name argument, that will be added to dbus path
- *
- * List of dbus handlers function defined in lua as number indexed table
- *
- */
 
 static DBusError err;
 static DBusConnection *conn = NULL;
+
 
 /*
  * Main dbus signals filter. Convert dbus message into lua table and call
@@ -105,9 +110,13 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 int
 luakit_dbus_init(lua_State *L, const char *name)
 {
-    char *dbus_name;
+    char *dbus_name, *dbus_matcher;
 
     dbus_name = g_strdup_printf("%s.%s", LUAKIT_DBUS_BASENAME, name);
+    dbus_matcher = g_strdup_printf("type='signal',interface='%s'", dbus_name);
+
+    debug("DBUS name: %s", dbus_name);
+    debug("DBUS matcher: %s", dbus_matcher);
 
     dbus_error_init(&err);
 
@@ -123,6 +132,11 @@ luakit_dbus_init(lua_State *L, const char *name)
         goto dbus_err;
     }
 
+    dbus_bus_add_match(conn, dbus_matcher, &err);
+    if (dbus_error_is_set(&err)) {
+        goto dbus_err;
+    }
+
     dbus_connection_add_filter(conn, dbus_signal_filter, L, NULL);
     if (dbus_error_is_set(&err)) {
         goto dbus_err;
@@ -132,6 +146,7 @@ luakit_dbus_init(lua_State *L, const char *name)
     dbus_connection_setup_with_g_main(conn, NULL);
 
     g_free(dbus_name);
+    g_free(dbus_matcher);
     return 0;
 
 dbus_err:
@@ -140,6 +155,7 @@ dbus_err:
     dbus_connection_unref(conn);
     conn = NULL;
     g_free(dbus_name);
+    g_free(dbus_matcher);
     return 1;
 }
 
