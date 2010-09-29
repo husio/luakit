@@ -131,9 +131,9 @@ end
 --
 -- this should be done somwhere else, but window object is required, so just for
 -- this example, register it here
-dbus.handlers.open_url = function (data)
-    w:new_tab(data.arg, true)
-end
+dbus.handlers:add_signal("open_url", function (handler, dbus_msg)
+        w:new_tab(dbus_msg.arg, true)
+    end)
 
 
 -----------------------------------------------------------

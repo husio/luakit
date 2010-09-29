@@ -3,29 +3,20 @@
 ----------------------------------------------------------------
 
 
+local require = require
+
 -- required by debug - remove later
 local pairs = pairs
 local print = print
 
-
 module("dbus")
 
+local signal = require "lousy.signal"
 
--- register new handlers here, using message member name as callback keys
-handlers = {}
+handlers = signal.setup({})
 
-
--- dummy debug callback - just show us what you've got
-function handlers.show(msg)
-    for k, v in pairs(msg) do
-        print(k, v)
-    end
-end
-
--- main dbus calls handler
-function main_handler(msg)
-    local callback = handlers[msg.member];
-    if callback then
-        callback(msg);
-    end
-end
+handlers:add_signal("show", function (handler, dbus_msg)
+        for k, v in pairs(dbus_msg) do
+            print(k, v)
+        end
+    end)

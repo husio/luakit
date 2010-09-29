@@ -47,28 +47,40 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 
     g_return_val_if_fail(L, DBUS_HANDLER_RESULT_HANDLED);
 
-    /* prepare Lua for dbus.handler call */
+    /* prepare Lua for dbus.handler:emit_signal call */
     lua_getfield(L, LUA_GLOBALSINDEX, "dbus");
     if (!lua_istable(L, -1)) {
-        g_error("dbus module not found\n");
+        warn("dbus module not found");
+        lua_pop(L, 1);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
-    lua_getfield(L, -1, "main_handler");
+    lua_getfield(L, -1, "handlers");
+    if (!lua_istable(L, lua_gettop(L))) {
+        warn("dbus.handlers *table* not found");
+        lua_pop(L, 2);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    lua_getfield(L, -1, "emit_signal");
     if (!lua_isfunction(L, lua_gettop(L))) {
-        g_error("dbus.main_handler callback not found\n");
+        warn("dbus.handler.emit_signal function not found");
+        lua_pop(L, 3);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
 
     dbus_message_get_args(msg, &err, DBUS_TYPE_STRING, &arg, DBUS_TYPE_INVALID);
     if (dbus_error_is_set(&err)) {
-        g_error("D-BUS message error: %s\n", err.message);
+        warn("D-BUS message error: %s", err.message);
         dbus_error_free(&err);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
 
+    /* this is method call, so put self on stack */
+    lua_getfield(L, -3, "handlers");
+
+    lua_pushstring(L, dbus_message_get_member(msg));
+
     /* create table with some useful dbus data */
     lua_newtable(L);
-
     switch(dbus_message_get_type(msg))
     {
       case DBUS_MESSAGE_TYPE_SIGNAL:
@@ -98,7 +110,10 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
     lua_pushstring(L, arg);
     lua_setfield(L, -2, "arg");
 
-    lua_call(L, 1, 0);
+    lua_call(L, 3, 0);
+
+    /* remove dbus.handlers from the stack */
+    lua_pop(L, 2);
 
     return DBUS_HANDLER_RESULT_HANDLED;
 }
