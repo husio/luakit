@@ -18,8 +18,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef __LUAKIT_DBUS__
-#define __LUAKIT_DBUS__
+#ifndef LUAKIT_COMMON_DBUS_H
+#define LUAKIT_COMMON_DBUS_H
 
 #include <glib.h>
 #include <dbus/dbus.h>
@@ -174,4 +174,4 @@ dbus_err:
     return 1;
 }
 
-#endif /* __LUAKIT_DBUS__ */
+#endif
