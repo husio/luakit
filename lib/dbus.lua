@@ -24,6 +24,7 @@ handlers:add_signal("show", function (handler, dbus_msg)
             prefix = prefix or ''
             for k, v in pairs(t) do
                 if type(v) == "table" then
+                    if #prefix > 0 then k = string.format("%s.%s", prefix, k) end
                     show_table(v, tostring(k))
                 else
                     if #prefix > 0 then k = string.format("%s.%s", prefix, k) end

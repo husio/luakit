@@ -35,14 +35,14 @@ static DBusConnection *conn = NULL;
 
 
 /*
- * Iter over given dbus message arguments and push them into given lua state
- * stack as table
+ * Iter over given dbus message iterator object and push values into lua state
+ * stack as table. Recursive.
  * Return 0 on success or error code.
  */
 static int
-dbus_message_to_lua(DBusMessage *msg, lua_State *L)
+dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
 {
-    DBusMessageIter iter;
+    DBusMessageIter subiter;
     dbus_bool_t arg_bool;
     gchar *arg_string;
     gint32 arg_int32;
@@ -51,38 +51,62 @@ dbus_message_to_lua(DBusMessage *msg, lua_State *L)
 
     lua_newtable(L);
 
-    dbus_message_iter_init(msg, &iter);
     do {
-        switch(dbus_message_iter_get_arg_type(&iter)) {
+        switch(dbus_message_iter_get_arg_type(iter)) {
           case DBUS_TYPE_INVALID:
             break;
           case DBUS_TYPE_BOOLEAN:
-            dbus_message_iter_get_basic(&iter, &arg_bool);
+            dbus_message_iter_get_basic(iter, &arg_bool);
             lua_pushinteger(L, t_next);
             lua_pushboolean(L, arg_bool);
             lua_settable(L, -3);
             ++t_next;
             break;
           case DBUS_TYPE_STRING:
-            dbus_message_iter_get_basic(&iter, &arg_string);
+            dbus_message_iter_get_basic(iter, &arg_string);
             lua_pushinteger(L, t_next);
             lua_pushstring(L, arg_string);
             lua_settable(L, -3);
             ++t_next;
             break;
           case DBUS_TYPE_INT32:
-            dbus_message_iter_get_basic(&iter, &arg_int32);
+            dbus_message_iter_get_basic(iter, &arg_int32);
             lua_pushinteger(L, t_next);
             lua_pushinteger(L, arg_int32);
             lua_settable(L, -3);
             ++t_next;
             break;
+          case DBUS_TYPE_BYTE:
+            break;
+          case DBUS_TYPE_ARRAY:
+            lua_pushinteger(L, t_next);
+            dbus_message_iter_recurse(iter, &subiter);
+            dbus_message_iter_to_lua(&subiter, L);
+            lua_settable(L, -3);
+            ++t_next;
+            break;
+          case DBUS_TYPE_DICT_ENTRY:
+            break;
           default:
             break;
         }
-    } while (dbus_message_iter_next(&iter));
+    } while (dbus_message_iter_next(iter));
 
     return 0;
+}
+
+/*
+ * Iter over given dbus message arguments and push them into given lua state
+ * stack as table
+ * Return 0 on success or error code.
+ */
+static int
+dbus_message_to_lua(DBusMessage *msg, lua_State *L)
+{
+    DBusMessageIter iter;
+
+    dbus_message_iter_init(msg, &iter);
+    return dbus_message_iter_to_lua(&iter, L);
 }
 
 /*
@@ -115,13 +139,6 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
     if (!lua_isfunction(L, lua_gettop(L))) {
         warn("dbus.handler.emit_signal function not found");
         lua_pop(L, 3);
-        return DBUS_HANDLER_RESULT_HANDLED;
-    }
-
-    dbus_message_get_args(msg, &err, DBUS_TYPE_STRING, &arg, DBUS_TYPE_INVALID);
-    if (dbus_error_is_set(&err)) {
-        warn("D-BUS message error: %s", err.message);
-        dbus_error_free(&err);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
 
