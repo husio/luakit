@@ -35,6 +35,57 @@ static DBusConnection *conn = NULL;
 
 
 /*
+ * Iter over given dbus message arguments and push them into given lua state
+ * stack as table
+ * Return 0 on success or error code.
+ */
+static int
+dbus_message_to_lua(DBusMessage *msg, lua_State *L)
+{
+    DBusMessageIter iter;
+    dbus_bool_t arg_bool;
+    gchar *arg_string;
+    gint32 arg_int32;
+    /* lua index begins with 1 */
+    gint t_next = 1;
+
+    lua_newtable(L);
+
+    dbus_message_iter_init(msg, &iter);
+    do {
+        switch(dbus_message_iter_get_arg_type(&iter)) {
+          case DBUS_TYPE_INVALID:
+            break;
+          case DBUS_TYPE_BOOLEAN:
+            dbus_message_iter_get_basic(&iter, &arg_bool);
+            lua_pushinteger(L, t_next);
+            lua_pushboolean(L, arg_bool);
+            lua_settable(L, -3);
+            ++t_next;
+            break;
+          case DBUS_TYPE_STRING:
+            dbus_message_iter_get_basic(&iter, &arg_string);
+            lua_pushinteger(L, t_next);
+            lua_pushstring(L, arg_string);
+            lua_settable(L, -3);
+            ++t_next;
+            break;
+          case DBUS_TYPE_INT32:
+            dbus_message_iter_get_basic(&iter, &arg_int32);
+            lua_pushinteger(L, t_next);
+            lua_pushinteger(L, arg_int32);
+            lua_settable(L, -3);
+            ++t_next;
+            break;
+          default:
+            break;
+        }
+    } while (dbus_message_iter_next(&iter));
+
+    return 0;
+}
+
+/*
  * Main dbus signals filter. Convert dbus message into lua table and call
  * related callback function if defined.
  */
@@ -107,10 +158,12 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
     lua_setfield(L, -2, "path");
     lua_pushstring(L, dbus_message_get_member(msg));
     lua_setfield(L, -2, "member");
-    lua_pushstring(L, arg);
-    lua_setfield(L, -2, "arg");
+    dbus_message_to_lua(msg, L);
+    lua_setfield(L, -2, "args");
 
-    lua_call(L, 3, 0);
+    if (lua_pcall(L, 3, 0, 0)) {
+        g_fprintf(stderr, "%s\n", lua_tostring(L, -1));
+    }
 
     /* remove dbus.handlers from the stack */
     lua_pop(L, 2);
