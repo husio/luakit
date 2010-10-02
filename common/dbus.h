@@ -35,6 +35,30 @@ static DBusConnection *conn = NULL;
 
 
 /*
+ * Merge table from top of the stack into table at given index.
+ *
+ * {x={1=a, 2=b}, y=z..} => {a=b, y=z}
+ */
+static void
+lua_mergetable(lua_State *L, int merge_to)
+{
+    gint npop = 0;
+    gint stack_top = lua_gettop(L);
+
+    lua_pushnil(L);
+    while (lua_next(L, stack_top)) {
+        ++npop;
+        lua_insert(L, -2);
+    };
+    if (npop != 2) {
+        error("Bad table format");
+    }
+    lua_settable(L, merge_to);
+    /* remove merged table - it should be now empty */
+    lua_pop(L, 1);
+}
+
+/*
  * Iter over given dbus message iterator object and push values into lua state
  * stack as table. Recursive.
  * Return 0 on success or error code.
@@ -53,41 +77,46 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
 
     do {
         switch(dbus_message_iter_get_arg_type(iter)) {
-          case DBUS_TYPE_INVALID:
+        case DBUS_TYPE_INVALID:
             break;
-          case DBUS_TYPE_BOOLEAN:
+        case DBUS_TYPE_BOOLEAN:
             dbus_message_iter_get_basic(iter, &arg_bool);
             lua_pushinteger(L, t_next);
             lua_pushboolean(L, arg_bool);
             lua_settable(L, -3);
             ++t_next;
             break;
-          case DBUS_TYPE_STRING:
+        case DBUS_TYPE_STRING:
             dbus_message_iter_get_basic(iter, &arg_string);
             lua_pushinteger(L, t_next);
             lua_pushstring(L, arg_string);
             lua_settable(L, -3);
             ++t_next;
             break;
-          case DBUS_TYPE_INT32:
+        case DBUS_TYPE_INT32:
             dbus_message_iter_get_basic(iter, &arg_int32);
             lua_pushinteger(L, t_next);
             lua_pushinteger(L, arg_int32);
             lua_settable(L, -3);
             ++t_next;
             break;
-          case DBUS_TYPE_BYTE:
+        case DBUS_TYPE_BYTE:
             break;
-          case DBUS_TYPE_ARRAY:
+        case DBUS_TYPE_ARRAY:
             lua_pushinteger(L, t_next);
             dbus_message_iter_recurse(iter, &subiter);
             dbus_message_iter_to_lua(&subiter, L);
             lua_settable(L, -3);
             ++t_next;
             break;
-          case DBUS_TYPE_DICT_ENTRY:
+        case DBUS_TYPE_DICT_ENTRY:
+            dbus_message_iter_recurse(iter, &subiter);
+            dbus_message_iter_to_lua(&subiter, L);
+            /* rebuild current table by mering latest table */
+            lua_mergetable(L, lua_gettop(L) - 1);
+            --t_next;
             break;
-          default:
+        default:
             break;
         }
     } while (dbus_message_iter_next(iter));
@@ -118,7 +147,6 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 {
     (void) c;
     lua_State *L = (lua_State *)data;
-    const char *arg;
 
     g_return_val_if_fail(L, DBUS_HANDLER_RESULT_HANDLED);
 
