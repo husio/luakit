@@ -27,32 +27,37 @@ static DBusConnection *conn = NULL;
 
 
 /*
- * Merge table from top of the stack into table at given index.
+ * Merge Lua table from top of the stack into table at given index.
  *
- * {x={1=a, 2=b}, y=z..} => {a=b, y=z}
+ * {x={1=a, 2=b}, y=z..}  =>  {a=b, y=z}
+ *
+ * Return 0 on success or error code. Always removes table from the top of the
+ * stack.
  */
-static void
+static int
 lua_mergetable(lua_State *L, int merge_to)
 {
-    gint npop = 0;
     gint stack_top = lua_gettop(L);
 
     lua_pushnil(L);
     while (lua_next(L, stack_top)) {
-        ++npop;
         lua_insert(L, -2);
     };
-    if (npop != 2) {
-        fatal("Bad table format");
+    if (lua_gettop(L) - stack_top != 2) {
+        /* cleanup the stack */
+        lua_pop(L, lua_gettop(L) - stack_top);
+        return 1;
     }
     lua_settable(L, merge_to);
     /* remove merged table - it should be now empty */
     lua_pop(L, 1);
+
+    return 0;
 }
 
 /*
- * Iter over given dbus message iterator object and push values into lua state
- * stack as table. Recursive.
+ * Iter using given dbus message iterator object and push values into given
+ * Lua stack as table.
  * Return 0 on success or error code.
  */
 static int
@@ -60,7 +65,7 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
 {
     DBusMessageIter subiter;
     dbus_bool_t arg_bool;
-    gchar *arg_string;
+    const gchar *arg_string;
     gint32 arg_int32;
     /* lua index begins with 1 */
     gint t_next = 1;
@@ -92,8 +97,6 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
             lua_settable(L, -3);
             ++t_next;
             break;
-        case DBUS_TYPE_BYTE:
-            break;
         case DBUS_TYPE_ARRAY:
             lua_pushinteger(L, t_next);
             dbus_message_iter_recurse(iter, &subiter);
@@ -109,6 +112,12 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
             --t_next;
             break;
         default:
+            warn("Ignoring unsupported type: %d",
+                    dbus_message_iter_get_arg_type(iter));
+            lua_pushinteger(L, t_next);
+            lua_pushstring(L, "unsupported_type");
+            lua_settable(L, -3);
+            ++t_next;
             break;
         }
     } while (dbus_message_iter_next(iter));
@@ -117,7 +126,7 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
 }
 
 /*
- * Iter over given dbus message arguments and push them into given lua state
+ * Iter over given dbus message arguments and push them into given Lua state
  * stack as table
  * Return 0 on success or error code.
  */
@@ -131,8 +140,8 @@ dbus_message_to_lua(DBusMessage *msg, lua_State *L)
 }
 
 /*
- * Main dbus signals filter. Convert dbus message into lua table and call
- * related callback function if defined.
+ * Main dbus signals filter. Convert dbus message into Lua table and emit
+ * related signal.
  */
 static DBusHandlerResult
 dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
@@ -210,7 +219,7 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 
 /*
  * Initialize dbus environment - build session name, connect to daemon and setup
- * signal filter. On any error, call `g_error`.
+ * signal filter. Return 0 on success or error code.
  */
 int
 luakit_dbus_init(lua_State *L, const char *name)
