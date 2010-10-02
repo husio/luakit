@@ -16,6 +16,9 @@ local tostring = tostring
 local type = type
 local unpack = unpack
 local verbose = luakit.verbose
+local tostring = tostring
+local setmetatable = setmetatable
+local next = next
 
 --- Provides a signal API similar to GTK's signals.
 module("lousy.signal")

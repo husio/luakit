@@ -55,6 +55,67 @@ lua_mergetable(lua_State *L, int merge_to)
     return 0;
 }
 
+static int
+dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
+{
+    const char *v_string;
+    gint32 v_int32;
+    dbus_bool_t v_bool;
+
+    for (;ret_num >= 0; --ret_num) {
+        switch (lua_type(L, -1)) {
+        case LUA_TSTRING:
+            v_string = lua_tostring(L, -1);
+            dbus_message_iter_append_basic(iter,
+                    DBUS_TYPE_STRING, &v_string);
+            break;
+        case LUA_TNUMBER:
+            v_int32 = lua_tointeger(L, -1);
+            dbus_message_iter_append_basic(iter,
+                    DBUS_TYPE_INT32, &v_int32);
+            break;
+        case LUA_TBOOLEAN:
+            v_bool = lua_toboolean(L, -1);
+            dbus_message_iter_append_basic(iter,
+                    DBUS_TYPE_BOOLEAN, &v_bool);
+            break;
+        case LUA_TTABLE:
+            /* TODO - 2010-10-02 at 12:47 */
+            break;
+        default:
+            warn("Unsupported type return: %s",
+                    lua_typename(L, lua_type(L, -1)));
+            v_string = g_strdup_printf(
+                    "cannot_convert:%s", lua_typename(L, lua_type(L, -1)));
+            dbus_message_iter_append_basic(iter,
+                    DBUS_TYPE_STRING, &v_string);
+            g_free(v_string);
+        }
+
+        lua_pop(L, 1);
+    }
+
+    return 0;
+}
+
+static DBusMessage *
+dbus_reply_from_lua(DBusMessage *msg, lua_State *L, gint ret_num)
+{
+    DBusMessage *reply;
+    DBusMessageIter iter;
+
+    dbus_message_iter_init(msg, &iter);
+    reply = dbus_message_new_method_return(msg);
+    dbus_message_iter_init_append(reply, &iter);
+
+    if (dbus_reply_iter_from_lua(&iter, L, ret_num)) {
+        dbus_message_unref(reply);
+        return NULL;
+    }
+
+    return reply;
+}
+
 /*
  * Iter using given dbus message iterator object and push values into given
  * Lua stack as table.
@@ -146,8 +207,9 @@ dbus_message_to_lua(DBusMessage *msg, lua_State *L)
 static DBusHandlerResult
 dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 {
-    (void) c;
     lua_State *L = (lua_State *)data;
+    gint top;
+    DBusMessage *reply = NULL;
 
     g_return_val_if_fail(L, DBUS_HANDLER_RESULT_HANDLED);
 
@@ -170,6 +232,7 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
         lua_pop(L, 3);
         return DBUS_HANDLER_RESULT_HANDLED;
     }
+    top = lua_gettop(L);
 
     /* this is method call, so put self on stack */
     lua_getfield(L, -3, "handlers");
@@ -207,12 +270,25 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
     dbus_message_to_lua(msg, L);
     lua_setfield(L, -2, "args");
 
-    if (lua_pcall(L, 3, 0, 0)) {
+    if (lua_pcall(L, 3, LUA_MULTRET, 0)) {
         g_fprintf(stderr, "%s\n", lua_tostring(L, -1));
+    }
+
+    /* if this is method call, create response based on Lua function call
+     * result
+     */
+    if (!dbus_message_get_no_reply(msg)) {
+        /* lua_gettop(L) - top == number of retuner arguments */
+        reply = dbus_reply_from_lua(msg, L, lua_gettop(L) - top);
     }
 
     /* remove dbus.handlers from the stack */
     lua_pop(L, 2);
+
+    if (reply) {
+        dbus_connection_send(c, reply, NULL);
+        dbus_message_unref(reply);
+    }
 
     return DBUS_HANDLER_RESULT_HANDLED;
 }
