@@ -25,7 +25,6 @@
 static DBusError err;
 static DBusConnection *conn = NULL;
 
-
 /*
  * Merge Lua table from top of the stack into table at given index.
  *
@@ -58,9 +57,12 @@ lua_mergetable(lua_State *L, int merge_to)
 static int
 dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
 {
+    DBusMessageIter subiter, subiter_d;
     const char *v_string;
     gint32 v_int32;
     dbus_bool_t v_bool;
+    gint t_index;
+    const char *t_sign;
 
     for (;ret_num >= 0; --ret_num) {
         switch (lua_type(L, -1)) {
@@ -80,7 +82,27 @@ dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
                     DBUS_TYPE_BOOLEAN, &v_bool);
             break;
         case LUA_TTABLE:
-            /* TODO - 2010-10-02 at 12:47 */
+            t_index = lua_gettop(L);
+            /* currently only strgin-string signature is supported */
+            t_sign = "{ss}";
+            dbus_message_iter_open_container(iter,
+                    DBUS_TYPE_ARRAY, t_sign, &subiter);
+            lua_pushnil(L);
+            while (lua_next(L, t_index)) {
+                dbus_message_iter_open_container(&subiter,
+                        DBUS_TYPE_DICT_ENTRY, NULL, &subiter_d);
+                v_string = lua_tostring(L, -1);
+                dbus_message_iter_append_basic(&subiter_d,
+                        DBUS_TYPE_STRING, &v_string);
+                lua_pop(L, 1);
+                lua_pushvalue(L, -1);
+                v_string = lua_tostring(L, -1);
+                dbus_message_iter_append_basic(&subiter_d,
+                        DBUS_TYPE_STRING, &v_string);
+                lua_pop(L, 1);
+                dbus_message_iter_close_container(&subiter, &subiter_d);
+            }
+            dbus_message_iter_close_container(iter, &subiter);
             break;
         default:
             warn("Unsupported type return: %s",
@@ -89,7 +111,7 @@ dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
                     "cannot_convert:%s", lua_typename(L, lua_type(L, -1)));
             dbus_message_iter_append_basic(iter,
                     DBUS_TYPE_STRING, &v_string);
-            g_free(v_string);
+            g_free((void *)v_string);
         }
 
         lua_pop(L, 1);
