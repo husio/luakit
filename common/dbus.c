@@ -20,8 +20,6 @@
 
 #include "dbus.h"
 
-#include "common/debug.h"
-
 static DBusError err;
 static DBusConnection *conn = NULL;
 
