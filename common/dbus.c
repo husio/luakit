@@ -20,10 +20,149 @@
 
 #include "dbus.h"
 
-
+#include "common/debug.h"
 
 static DBusError err;
 static DBusConnection *conn = NULL;
+
+static int lua_mergetable(lua_State *, int);
+static int lua_tabletypes(lua_State *, int, int *, int *);
+static int lua_tableisarray(lua_State *, int);
+
+static char *dbus_signature_for_lua_table(lua_State *, int);
+static int dbus_reply_iter_from_lua(DBusMessageIter *, lua_State *, gint);
+static int dbus_container_from_lua_table(DBusMessageIter *, lua_State *, int);
+static DBusMessage * dbus_reply_from_lua(DBusMessage *, lua_State *, gint);
+static int dbus_message_iter_to_lua(DBusMessageIter *, lua_State *);
+static int dbus_message_to_lua(DBusMessage *, lua_State *);
+static DBusHandlerResult dbus_signal_filter(DBusConnection *, DBusMessage *, void *);
+static char dbus_sign_from_lua_type(int type);
+
+
+/*
+ * Return 1 if Lua table at given index is an array, else 0.  It is considered
+ * an array if contains only number indexes that begins with 1 and increments
+ * with every value.
+ */
+static int
+lua_tableisarray(lua_State *L, int index)
+{
+    int i;
+    int t_index = index;
+
+    if (t_index < 0) {
+        /* absolude stack index for given table */
+        t_index = lua_gettop(L) - (index + 1);
+    }
+
+    lua_pushnil(L);
+    /* lua indexes begins with 1 */
+    i = 1;
+    while (lua_next(L, t_index)) {
+        /* pop only value */
+        lua_pop(L, 1);
+        /* check both key type and it's value */
+        if (!lua_isnumber(L, -1) || i != lua_tonumber(L, -1)) {
+            /* end of iteration - remove key from the stack */
+            lua_pop(L, 1);
+            return 0;
+        }
+        ++i;
+    }
+    return 1;
+}
+
+/*
+ * Get lua table key and value types. Returns 0 on succes or error code if key
+ * and/or value type cannot be returned (this is for example when table
+ * contains keys/values of more than one type)
+ */
+static int
+lua_tabletypes(lua_State *L, int index, int *key_t, int *val_t)
+{
+    int t_index = index;
+
+    if (t_index < 0) {
+        t_index = lua_gettop(L) - (index + 1);
+    }
+    /* flush both key and value types */
+    *key_t = -1;
+    *val_t = -1;
+
+    lua_pushnil(L);
+    while (lua_next(L, t_index)) {
+        /* if type is already initialized and previous type is different than
+         * current one, then we cannot return single type value
+         */
+        if (*val_t != lua_type(L, -1) && *val_t >= 0) {
+            lua_pop(L, 2);
+            return -1;
+        }
+        if (*key_t != lua_type(L, -2) && *key_t >= 0) {
+            lua_pop(L, 2);
+            return -2;
+        }
+
+        *val_t = lua_type(L, -1);
+        *key_t = lua_type(L, -2);
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/*
+ * Get dbus signature byte for given Lua type. Returns 0 if given Lua type
+ * cannot be mapped to any dbus signature.
+ */
+static char
+dbus_sign_from_lua_type(int type)
+{
+    switch (type) {
+        case LUA_TSTRING:
+            return 's';
+        case LUA_TNUMBER:
+            return 'i';
+        case LUA_TBOOLEAN:
+            return 'b';
+    }
+    return '\0';
+}
+
+/*
+ * Assing 4 byte signature at given sing poiter, based on lua table at given
+ * index. Returns valid dbus signature or raises Lua error and returns NULL.
+ *
+ * If returned value is not NULL, then caller is responsible for returned
+ * value memory deallocation.
+ */
+static char *
+dbus_signature_for_lua_table(lua_State *L, int index)
+{
+    char key_s, val_s;
+    int key_t, val_t;
+
+    if (lua_tabletypes(L, index, &key_t, &val_t)) {
+        lua_pushstring(L, "Given table cannot be mapped: "
+                "contains more than one type for  key or value");
+        lua_error(L);
+        return NULL;
+    }
+
+    key_s = dbus_sign_from_lua_type(key_t);
+    val_s = dbus_sign_from_lua_type(val_t);
+    if (key_s == 0 || val_s == 0) {
+        lua_pushstring(L, "Unknown table signatures");
+        lua_error(L);
+        return NULL;
+    }
+    if (lua_tableisarray(L, index)) {
+        /* if given table is number indexed, then it's an array */
+        return g_strdup_printf("%c", val_s);
+    }
+
+    return g_strdup_printf("{%c%c}", key_s, val_s);
+}
+
 
 /*
  * Merge Lua table from top of the stack into table at given index.
@@ -54,15 +193,63 @@ lua_mergetable(lua_State *L, int merge_to)
     return 0;
 }
 
+/*
+ * Convert Lua table at given index into dbus container. This supports both
+ * arrays and dicts.
+ */
+static int
+dbus_container_from_lua_table(DBusMessageIter *iter, lua_State *L, int index)
+{
+    DBusMessageIter subiter, subiter_d;
+    const char *t_sign = NULL;
+
+    if (index < 0) {
+        index = lua_gettop(L) - (index + 1);
+    }
+
+    t_sign = dbus_signature_for_lua_table(L, index);
+    if (t_sign == NULL) {
+        warn("Cannot create signature");
+        return -1;
+    }
+
+    dbus_message_iter_open_container(iter,
+            DBUS_TYPE_ARRAY, t_sign, &subiter);
+    lua_pushnil(L);
+    if (lua_tableisarray(L, index)) {
+        while (lua_next(L, index)) {
+            /* simple number indexed array */
+            dbus_reply_iter_from_lua(&subiter, L, 0);
+        }
+    } else {
+        while (lua_next(L, index)) {
+            /* dict tyle */
+            dbus_message_iter_open_container(&subiter,
+                    DBUS_TYPE_DICT_ENTRY, NULL, &subiter_d);
+            lua_pushvalue(L, -2);
+            dbus_reply_iter_from_lua(&subiter_d, L, 0);
+            dbus_reply_iter_from_lua(&subiter_d, L, 0);
+            dbus_message_iter_close_container(&subiter, &subiter_d);
+        }
+    }
+    dbus_message_iter_close_container(iter, &subiter);
+    g_free((void *)t_sign);
+
+    return 0;
+}
+
+/*
+ * Push (ret_num + 1) number of Lua objects from the top of the stack into
+ * given dbus message iterator.
+ * This function removes (ret_num + 1) objects from the stack
+ */
 static int
 dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
 {
-    DBusMessageIter subiter, subiter_d;
     const char *v_string;
     gint32 v_int32;
     dbus_bool_t v_bool;
     gint t_index;
-    const char *t_sign;
 
     for (;ret_num >= 0; --ret_num) {
         switch (lua_type(L, -1)) {
@@ -83,26 +270,7 @@ dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
             break;
         case LUA_TTABLE:
             t_index = lua_gettop(L);
-            /* currently only strgin-string signature is supported */
-            t_sign = "{ss}";
-            dbus_message_iter_open_container(iter,
-                    DBUS_TYPE_ARRAY, t_sign, &subiter);
-            lua_pushnil(L);
-            while (lua_next(L, t_index)) {
-                dbus_message_iter_open_container(&subiter,
-                        DBUS_TYPE_DICT_ENTRY, NULL, &subiter_d);
-                v_string = lua_tostring(L, -1);
-                dbus_message_iter_append_basic(&subiter_d,
-                        DBUS_TYPE_STRING, &v_string);
-                lua_pop(L, 1);
-                lua_pushvalue(L, -1);
-                v_string = lua_tostring(L, -1);
-                dbus_message_iter_append_basic(&subiter_d,
-                        DBUS_TYPE_STRING, &v_string);
-                lua_pop(L, 1);
-                dbus_message_iter_close_container(&subiter, &subiter_d);
-            }
-            dbus_message_iter_close_container(iter, &subiter);
+            dbus_container_from_lua_table(iter, L, t_index);
             break;
         default:
             warn("Unsupported type return: %s",
@@ -120,6 +288,10 @@ dbus_reply_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
     return 0;
 }
 
+/*
+ * Remove (ret_num + 1) Lua objects from the top of the stack and push them
+ * into given dbus message structure.
+ */
 static DBusMessage *
 dbus_reply_from_lua(DBusMessage *msg, lua_State *L, gint ret_num)
 {
