@@ -19,6 +19,7 @@
  */
 
 #include "dbus.h"
+#include "common/lualib.h"
 
 static DBusError err;
 static DBusConnection *conn = NULL;
@@ -41,6 +42,10 @@ static int dbus_message_to_lua(DBusMessage *, lua_State *);
 static DBusHandlerResult dbus_signal_filter(DBusConnection *, DBusMessage *, void *);
 static char dbus_sign_from_lua_type(int type);
 
+struct dbus_pending_callback_data {
+    lua_State *L;
+    gint callback_ref;
+};
 
 /*
  * Return 1 if Lua table at given index is an array, else 0.  It is considered
@@ -558,7 +563,8 @@ dbus_message_arguments_from_lua(DBusMessage *msg, lua_State *L)
     DBusMessageIter iter;
 
     if (!lua_istable(L, -1) || !lua_tableisarray(L, -1)) {
-        warn("Cannot attach arguments to D-BUS message - array not found.");
+        warn("Cannot attach arguments to D-BUS message - "
+                "numbers indexed array not found.");
         return 1;
     }
 
@@ -585,23 +591,78 @@ dbus_message_arguments_from_lua(DBusMessage *msg, lua_State *L)
 }
 
 /*
+ * Wrapper for D-BUS pending callback and Lua callback function.
+ */
+static void
+lua_dbus_method_call_peding_callback(DBusPendingCall *pending, void *data)
+{
+    gint err, i, t_size, t_index;
+    lua_State *L;
+    DBusMessage *msg;
+    struct dbus_pending_callback_data *d;
+
+    err = 0;
+    d = (struct dbus_pending_callback_data *) data;
+    L = d->L;
+
+    msg = dbus_pending_call_steal_reply(pending);
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, d->callback_ref);
+    if (!lua_isfunction(L, -1)) {
+        warn("Callback argument is not a function: %d", d->callback_ref);
+        err = 1;
+    }
+
+    dbus_message_to_lua(msg, L);
+
+    /* unpack created array */
+    t_index = lua_gettop(L);
+    t_size = lua_tablesize(L, t_index);
+    for (i=t_size; i>0; --i) {
+        lua_pushinteger(L, i);
+        lua_gettable(L, t_index);
+    }
+
+    /* remove those two tables from the stack - they have beed unpacked */
+    lua_remove(L, t_index);
+
+    if (!err && lua_pcall(L, t_size, 0, 0) != 0) {
+        warn("Callback object call fail: %d", d->callback_ref);
+        err = 2;
+    }
+    lua_pop(L, 1);
+
+    g_free(d);
+    dbus_pending_call_unref(pending);
+
+    if (err) {
+        luaL_error(L, "Callback function call error: %d", err);
+    }
+}
+
+/*
  * Lua function. Make D-BUS methd call.
  *
  * As the only parameter, array should be given. Required keys are:
  * - dest
  * - path
  * - interface
- * - member
+ * - method
  *
- * Optional message parameter should be array with arguments that given member
- * will be called with.
+ * Optional paramenters:
+ * - timeout: -1 to use default
+ * - callback: callback function that will be called when the response arrives
+ * - message: should be an array with arguments that given method will be
+ *   called with.
  */
 static int
 lua_dbus_method_call(lua_State *L)
 {
     DBusMessage *msg;
-    dbus_uint32_t serial;
+    DBusPendingCall* pending;
+    gint timeout, callback_ref;
     const char *dest, *path, *interface, *method;
+    struct dbus_pending_callback_data *p_data;
 
     if (!lua_istable(L, -1)) {
         luaL_error(L, "Single array argument required.");
@@ -613,13 +674,27 @@ lua_dbus_method_call(lua_State *L)
     interface = lua_get_string_from_table(L, "interface");
     method = lua_get_string_from_table(L, "method");
 
+    timeout = -1;
+    lua_pushstring(L, "timeout");
+    lua_gettable(L, -2);
+    if (lua_isnumber(L, -1)) {
+        timeout = lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
+
+    callback_ref = 0;
+    lua_pushstring(L, "callback");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        callback_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        lua_pop(L, 1);
+    }
+
     msg = dbus_message_new_method_call(dest, path, interface, method);
     if (msg == NULL) {
         luaL_error(L, "Cannot create dbus message.");
     }
-
-    serial = (dbus_uint32_t) g_random_int();
-    dbus_message_set_serial(msg, serial);
 
     /* if exists, attach message arguments to created dbus message */
     lua_pushstring(L, "message");
@@ -628,10 +703,28 @@ lua_dbus_method_call(lua_State *L)
     lua_pop(L, 1);
 
     /* send message and get a handle for a reply */
-    debug("dbus method call: %d", serial);
-    if (!dbus_connection_send(conn, msg, &serial)) {
+    if (!dbus_connection_send_with_reply(conn, msg, &pending, timeout)) {
         dbus_message_unref(msg);
-        luaL_error(L, "Out of memmory.");
+        luaL_error(L, "Out of memory.");
+    }
+
+    if (pending == NULL) {
+        luaL_error(L, "Pengind D-BUS call error.");
+    }
+
+    /* if lua function callback was given, register callback wrapper */
+    if (callback_ref) {
+        /* alloc pending callback data struct that callback should free */
+        p_data = g_malloc(sizeof(struct dbus_pending_callback_data));
+        p_data->L = L;
+        p_data->callback_ref = callback_ref;
+
+        if (!dbus_pending_call_set_notify(pending,
+                    lua_dbus_method_call_peding_callback, p_data, NULL)) {
+            luaL_error(L, "Out of memory.");
+        }
+    } else {
+        dbus_pending_call_unref(pending);
     }
 
     dbus_message_unref(msg);

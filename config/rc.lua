@@ -132,7 +132,7 @@ end
 -- this should be done somwhere else, but window object is required, so just for
 -- this example, register it here
 dbus.handlers:add_signal("open_url", function (handler, dbus_msg)
-        w:new_tab(dbus_msg.args[1])
+        w:new_tab(unpack(dbus_msg.args))
     end)
 
 if unique then
@@ -166,13 +166,6 @@ dbus.method_call({
         '',
         5000
     }
-})
-
-dbus.signal({
-    path='/',
-    interface='org.luakit.dbus.luakit',
-    name='show',
-    message={"Test signal from luakit"}
 })
 
 -- vim: et:sw=4:ts=8:sts=4:tw=80

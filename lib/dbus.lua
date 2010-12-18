@@ -13,6 +13,7 @@ local table = table
 local tostring = tostring
 local string = string
 local unpack = unpack
+local dbus = dbus
 
 module("dbus")
 
@@ -39,7 +40,45 @@ handlers:add_signal("show", function (handler, dbus_msg)
     print('-------------------------------')
 end)
 
-handlers:add_signal("callback", function (handler, dbus_msg)
-    -- echo recived args
+dbus.method_call({
+    dest='org.freedesktop.Notifications',
+    path='/org/freedesktop/Notifications',
+    interface='org.freedesktop.Notifications',
+    method='Notify',
+    message={
+        "app_name",
+        0,
+        "app_icon",
+        "Greetings from luakit!",
+        "This is test method call, send strait from luakit, using dbus",
+        '',
+        '',
+        5000
+    }
+})
+
+-- echo
+handlers:add_signal("echo", function (handler, dbus_msg)
+    print('echo signal: ', unpack(dbus_msg.args))
     return unpack(dbus_msg.args)
 end)
+
+
+dbus.method_call({
+    dest='org.luakit.dbus.luakit',
+    path='/org/luakit/dbus/luakit',
+    interface='org.luakit.dbus.luakit',
+    method='echo',
+    callback=function (a, b)
+        print("method call callback result: ", a, b)
+    end,
+    message={42, "Test method call message"}
+})
+
+dbus.signal({
+    path='/',
+    interface='org.luakit.dbus.luakit',
+    name='show',
+    message={"Test signal from luakit"}
+})
+
