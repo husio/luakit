@@ -351,6 +351,7 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
     dbus_bool_t arg_bool;
     const gchar *arg_string;
     gint32 arg_int32;
+    guint32 arg_uint32;
     /* lua index begins with 1 */
     gint t_next = 1;
 
@@ -371,6 +372,13 @@ dbus_message_iter_to_lua(DBusMessageIter *iter, lua_State *L)
             dbus_message_iter_get_basic(iter, &arg_string);
             lua_pushinteger(L, t_next);
             lua_pushstring(L, arg_string);
+            lua_settable(L, -3);
+            ++t_next;
+            break;
+        case DBUS_TYPE_UINT32:
+            dbus_message_iter_get_basic(iter, &arg_uint32);
+            lua_pushinteger(L, t_next);
+            lua_pushinteger(L, arg_uint32);
             lua_settable(L, -3);
             ++t_next;
             break;
