@@ -155,17 +155,24 @@ dbus.method_call({
     dest='org.freedesktop.Notifications',
     path='/org/freedesktop/Notifications',
     interface='org.freedesktop.Notifications',
-    member='Notify',
+    method='Notify',
     message={
         "app_name",
         0,
         "app_icon",
         "Greetings from luakit!",
-        "This is test message, send strait from luakit, using dbus",
+        "This is test method call, send strait from luakit, using dbus",
         '',
         '',
         5000
     }
+})
+
+dbus.signal({
+    path='/',
+    interface='org.luakit.dbus.luakit',
+    name='show',
+    message={"Test signal from luakit"}
 })
 
 -- vim: et:sw=4:ts=8:sts=4:tw=80

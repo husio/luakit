@@ -26,15 +26,16 @@ static DBusConnection *conn = NULL;
 static int lua_mergetable(lua_State *, int);
 static int lua_tabletypes(lua_State *, int, int *, int *);
 static int lua_tableisarray(lua_State *, int);
-static int lua_dbus_method_call(lua_State *);
 static int lua_tablesize(lua_State *, int);
+static int lua_dbus_method_call(lua_State *);
+static int lua_dbus_signal(lua_State *);
 static const char * lua_get_string_from_table(lua_State *, const char *);
 
-static int dbus_init_module(lua_State *);
 static char *dbus_signature_for_lua_table(lua_State *, int);
 static int dbus_message_iter_from_lua(DBusMessageIter *, lua_State *, gint);
 static int dbus_container_from_lua_table(DBusMessageIter *, lua_State *, int);
-static DBusMessage * dbus_response_from_lua(DBusMessage *, lua_State *, gint);
+static DBusMessage *dbus_message_response_from_lua(DBusMessage *, lua_State *, gint);
+static int dbus_message_arguments_from_lua(DBusMessage *, lua_State *);
 static int dbus_message_iter_to_lua(DBusMessageIter *, lua_State *);
 static int dbus_message_to_lua(DBusMessage *, lua_State *);
 static DBusHandlerResult dbus_signal_filter(DBusConnection *, DBusMessage *, void *);
@@ -321,7 +322,7 @@ dbus_message_iter_from_lua(DBusMessageIter *iter, lua_State *L, gint ret_num)
  * into given dbus message structure.
  */
 static DBusMessage *
-dbus_response_from_lua(DBusMessage *msg, lua_State *L, gint ret_num)
+dbus_message_response_from_lua(DBusMessage *msg, lua_State *L, gint ret_num)
 {
     DBusMessage *reply;
     DBusMessageIter iter;
@@ -501,7 +502,7 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
      */
     if (!dbus_message_get_no_reply(msg)) {
         /* lua_gettop(L) - top == number of retuner arguments */
-        reply = dbus_response_from_lua(msg, L, lua_gettop(L) - top);
+        reply = dbus_message_response_from_lua(msg, L, lua_gettop(L) - top);
     }
 
     /* remove dbus.handlers from the stack */
@@ -516,24 +517,11 @@ dbus_signal_filter(DBusConnection *c, DBusMessage *msg, void *data)
 }
 
 /*
- * Initialize luakit dbus modules, so we could send messages to any dbus
- * service
+ * Return string value related to given key string from lua table that is on
+ * the top of the stack.
+ *
+ * Calls luaL_error when value does not exist or is not a string.
  */
-static int
-dbus_init_module(lua_State *L)
-{
-    lua_newtable(L);
-
-    lua_pushstring(L, "method_call");
-    lua_pushcfunction(L, lua_dbus_method_call);
-    lua_settable(L, -3);
-
-    /* register new table - dbus module */
-    lua_setglobal(L, "dbus");
-
-    return 0;
-}
-
 static const char *
 lua_get_string_from_table(lua_State *L, const char *key)
 {
@@ -542,7 +530,7 @@ lua_get_string_from_table(lua_State *L, const char *key)
     lua_pushstring(L, key);
     lua_gettable(L, -2);
     if (!lua_isstring(L, -1)) {
-        luaL_error(L, "String argument required for %s key.", key);
+        luaL_error(L, "String value required for '%s' key.", key);
     }
     value = lua_tostring(L, -1);
     lua_pop(L, 1);
@@ -550,31 +538,74 @@ lua_get_string_from_table(lua_State *L, const char *key)
     return value;
 }
 
+/*
+ * Attach values from top stack Lua array to given D-BUS message
+ *
+ * Return 0 on success or error code.
+ */
+static int
+dbus_message_arguments_from_lua(DBusMessage *msg, lua_State *L)
+{
+    int i, t_size, t_index;
+    DBusMessageIter iter;
+
+    if (!lua_istable(L, -1) || !lua_tableisarray(L, -1)) {
+        warn("Cannot attach arguments to D-BUS message - array not found.");
+        return 1;
+    }
+
+    t_index = lua_gettop(L);
+    t_size = lua_tablesize(L, t_index);
+
+    debug("attaching parameters to dbus message");
+
+    for (i=t_size; i>0; --i) {
+        lua_pushinteger(L, i);
+        lua_gettable(L, t_index);
+    }
+
+    dbus_message_iter_init(msg, &iter);
+    dbus_message_iter_init_append(msg, &iter);
+
+    if (dbus_message_iter_from_lua(&iter, L, t_size - 1)) {
+        dbus_message_unref(msg);
+        warn("Cannot attach parameters to dbus message.");
+        return 2;
+    }
+
+    return 0;
+}
+
+/*
+ * Lua function. Make D-BUS methd call.
+ *
+ * As the only parameter, array should be given. Required keys are:
+ * - dest
+ * - path
+ * - interface
+ * - member
+ *
+ * Optional message parameter should be array with arguments that given member
+ * will be called with.
+ */
 static int
 lua_dbus_method_call(lua_State *L)
 {
-    /*
-     * TODO
-     *
-     * this function is one big blob - refactor it
-     */
     DBusMessage *msg;
-    DBusMessageIter iter;
     dbus_uint32_t serial;
-    int i, t_index, t_size;
-    const char *dest, *path, *interface, *member;
+    const char *dest, *path, *interface, *method;
 
     if (!lua_istable(L, -1)) {
-        luaL_error(L, "Table argument required.");
+        luaL_error(L, "Single array argument required.");
     }
 
     /* create dbus message using params from single lua array argument */
     dest = lua_get_string_from_table(L, "dest");
     path = lua_get_string_from_table(L, "path");
     interface = lua_get_string_from_table(L, "interface");
-    member = lua_get_string_from_table(L, "member");
+    method = lua_get_string_from_table(L, "method");
 
-    msg = dbus_message_new_method_call(dest, path, interface, member);
+    msg = dbus_message_new_method_call(dest, path, interface, method);
     if (msg == NULL) {
         luaL_error(L, "Cannot create dbus message.");
     }
@@ -585,36 +616,63 @@ lua_dbus_method_call(lua_State *L)
     /* if exists, attach message arguments to created dbus message */
     lua_pushstring(L, "message");
     lua_gettable(L, -2);
-
-    /* dbus message parameters array on top of the stack */
-    if (lua_istable(L, -1) && lua_tableisarray(L, -1)) {
-        t_index = lua_gettop(L);
-        t_size = lua_tablesize(L, t_index);
-
-        debug("attaching parameters to dbus message");
-
-        for (i=t_size; i>0; --i) {
-            lua_pushinteger(L, i);
-            lua_gettable(L, t_index);
-        }
-
-        dbus_message_iter_init(msg, &iter);
-        dbus_message_iter_init_append(msg, &iter);
-
-        if (dbus_message_iter_from_lua(&iter, L, t_size - 1)) {
-            dbus_message_unref(msg);
-            luaL_error(L, "Cannot attach parameters to dbus message.");
-        }
-    } else {
-        /* TODO - warning instead?*/
-        fprintf(stderr, "bad output data format... \n");
-    }
-
-    /* pop message arguments table */
+    dbus_message_arguments_from_lua(msg, L);
     lua_pop(L, 1);
 
     /* send message and get a handle for a reply */
-    debug("sending dbus message: %d", serial);
+    debug("dbus method call: %d", serial);
+    if (!dbus_connection_send(conn, msg, &serial)) {
+        dbus_message_unref(msg);
+        luaL_error(L, "Out of memmory.");
+    }
+
+    dbus_message_unref(msg);
+    return 0;
+}
+
+/*
+ * Lua function. Send D-BUS signal.
+ *
+ * As the only parameter, array should be given. Required keys are:
+ * - path
+ * - interface
+ * - name
+ *
+ * Optional message parameter should be array with arguments that given member
+ * will be called with.
+ */
+static int
+lua_dbus_signal(lua_State *L)
+{
+    DBusMessage *msg;
+    dbus_uint32_t serial;
+    const char *path, *interface, *sig_name;
+
+    if (!lua_istable(L, -1)) {
+        luaL_error(L, "Single array argument required.");
+    }
+
+    /* create dbus message using params from single lua array argument */
+    path = lua_get_string_from_table(L, "path");
+    interface = lua_get_string_from_table(L, "interface");
+    sig_name = lua_get_string_from_table(L, "name");
+
+    msg = dbus_message_new_signal(path, interface, sig_name);
+    if (msg == NULL) {
+        luaL_error(L, "Cannot create dbus message.");
+    }
+
+    serial = (dbus_uint32_t) g_random_int();
+    dbus_message_set_serial(msg, serial);
+
+    /* if exists, attach message arguments to created dbus message */
+    lua_pushstring(L, "message");
+    lua_gettable(L, -2);
+    dbus_message_arguments_from_lua(msg, L);
+    lua_pop(L, 1);
+
+    /* send message and get a handle for a reply */
+    debug("dbus signal: %d", serial);
     if (!dbus_connection_send(conn, msg, &serial)) {
         dbus_message_unref(msg);
         luaL_error(L, "Out of memmory.");
@@ -669,7 +727,21 @@ luakit_dbus_init(lua_State *L, const char *name)
     g_free(dbus_name);
     g_free(dbus_matcher);
 
-    return dbus_init_module(L);
+    /* initialize lua dbus module */
+    lua_newtable(L);
+
+    lua_pushstring(L, "method_call");
+    lua_pushcfunction(L, lua_dbus_method_call);
+    lua_settable(L, -3);
+
+    lua_pushstring(L, "signal");
+    lua_pushcfunction(L, lua_dbus_signal);
+    lua_settable(L, -3);
+
+    /* register new table - dbus module */
+    lua_setglobal(L, "dbus");
+
+    return 0;
 
 dbus_err:
     g_error("D-BUS error: %s\n", err.message);
