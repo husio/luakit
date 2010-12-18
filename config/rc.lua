@@ -135,10 +135,6 @@ dbus.handlers:add_signal("open_url", function (handler, dbus_msg)
         w:new_tab(dbus_msg.args[1])
     end)
 
-
------------------------------------------------------------
--- Open URIs from other luakit instances (DBUS required) --
------------------------------------------------------------
 if unique then
     unique.add_signal("message", function (msg, screen)
         local cmd, arg = string.match(msg, "^(%S+)%s*(.*)")
@@ -151,5 +147,25 @@ if unique then
         w.win:set_screen(screen)
     end)
 end
+
+-----------------------------------------------------------
+-- Open URIs from other luakit instances (DBUS required) --
+-----------------------------------------------------------
+dbus.method_call({
+    dest='org.freedesktop.Notifications',
+    path='/org/freedesktop/Notifications',
+    interface='org.freedesktop.Notifications',
+    member='Notify',
+    message={
+        "app_name",
+        0,
+        "app_icon",
+        "Greetings from luakit!",
+        "This is test message, send strait from luakit, using dbus",
+        '',
+        '',
+        5000
+    }
+})
 
 -- vim: et:sw=4:ts=8:sts=4:tw=80
