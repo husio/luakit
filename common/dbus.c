@@ -42,7 +42,7 @@ static int dbus_message_to_lua(DBusMessage *, lua_State *);
 static DBusHandlerResult dbus_signal_filter(DBusConnection *, DBusMessage *, void *);
 static char dbus_sign_from_lua_type(int type);
 
-struct dbus_pending_callback_data {
+static struct dbus_pending_callback_data {
     lua_State *L;
     gint callback_ref;
 };
