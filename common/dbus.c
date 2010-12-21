@@ -634,6 +634,7 @@ lua_dbus_method_call_peding_callback(DBusPendingCall *pending, void *data)
 
     g_free(d);
     dbus_pending_call_unref(pending);
+    luaL_unref(L, LUA_REGISTRYINDEX, d->callback_ref);
 
     if (err) {
         luaL_error(L, "Callback function call error: %d", err);
