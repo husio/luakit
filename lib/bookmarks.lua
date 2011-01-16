@@ -273,6 +273,11 @@ local cmd = lousy.bind.cmd
 add_cmds({
     cmd({"bookmark", "bm"},
         function (w, a)
+            if (a == nil) then
+                w:error("Bad command usage. Bookmark title missing")
+                return
+            end
+
             local args = util.string.split(a)
             local uri = table.remove(args, 1)
             add(uri, args)
